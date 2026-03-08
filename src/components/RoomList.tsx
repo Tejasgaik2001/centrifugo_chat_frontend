@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { roomAPI, userAPI } from '../api';
 import { ws } from '../websocket';
+import PresenceIndicator from './PresenceIndicator';
 import './RoomList.css';
 
 interface Room {
@@ -13,23 +14,31 @@ interface Room {
   usernames?: string[];
 }
 
-interface RoomListProps {
+interface UserPresence {
   userId: string;
+  username: string;
+  status: 'online' | 'offline' | 'away' | 'dnd';
+  lastSeen: string;
+}
+
+interface RoomListProps {
   username: string;
   selectedRoom: Room | null;
   onSelectRoom: (room: Room) => void;
 }
 
-export default function RoomList({ userId, username, selectedRoom, onSelectRoom }: RoomListProps) {
+export default function RoomList({ username, selectedRoom, onSelectRoom }: RoomListProps) {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [showNewChat, setShowNewChat] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [userPresence, setUserPresence] = useState<Record<string, UserPresence>>({});
 
   const getRoomId = (room: Room | null | undefined) => room?._id ?? room?.id ?? room?.rid ?? '';
 
   useEffect(() => {
     loadRooms();
+    loadUserPresence();
 
     // Listen for new messages to update unread counters
     const handleNewMessage = (data: any) => {
@@ -66,10 +75,28 @@ export default function RoomList({ userId, username, selectedRoom, onSelectRoom 
       }
     };
 
+    // Listen for presence changes
+    const handlePresenceChange = (data: any) => {
+      console.log('[RoomList] Presence change event received:', data);
+      if (data.type === 'presence_change') {
+        setUserPresence(prev => ({
+          ...prev,
+          [data.userId]: {
+            userId: data.userId,
+            username: data.username,
+            status: data.status,
+            lastSeen: data.timestamp
+          }
+        }));
+      }
+    };
+
     ws.on('message_new', handleNewMessage);
+    ws.on('presence_change', handlePresenceChange);
 
     return () => {
       ws.off('message_new', handleNewMessage);
+      ws.off('presence_change', handlePresenceChange);
     };
   }, [selectedRoom]);
 
@@ -81,6 +108,24 @@ export default function RoomList({ userId, username, selectedRoom, onSelectRoom 
     } catch (err) {
       console.error('Failed to load rooms:', err);
     }
+  };
+
+  const loadUserPresence = async () => {
+    try {
+      const res = await userAPI.getPresence();
+      const presenceMap: Record<string, UserPresence> = {};
+      res.data.users.forEach((user: UserPresence) => {
+        presenceMap[user.userId] = user;
+      });
+      setUserPresence(presenceMap);
+    } catch (err) {
+      console.error('Failed to load user presence:', err);
+    }
+  };
+
+  const getUserPresence = (username: string): UserPresence | null => {
+    const user = Object.values(userPresence).find(p => p.username === username);
+    return user || null;
   };
 
   const handleSearch = async (query: string) => {
@@ -156,6 +201,7 @@ export default function RoomList({ userId, username, selectedRoom, onSelectRoom 
               {searchResults.map(user => {
                 const resultName = user.name?.trim() || user.username?.trim() || 'User';
                 const resultUsername = user.username?.trim() || 'unknown';
+                const presence = getUserPresence(resultUsername);
 
                 return (
                   <div
@@ -166,9 +212,15 @@ export default function RoomList({ userId, username, selectedRoom, onSelectRoom 
                     <div className="user-avatar-small">
                       {getAvatarInitial(resultName)}
                     </div>
-                    <div>
+                    <div className="search-user-info">
                       <div className="result-name">{resultName}</div>
                       <div className="result-username">@{resultUsername}</div>
+                      <div className="user-presence">
+                        <PresenceIndicator status={presence?.status || 'offline'} size="small" />
+                        <span className="presence-text">
+                          {presence?.status || 'offline'}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 );
@@ -182,6 +234,13 @@ export default function RoomList({ userId, username, selectedRoom, onSelectRoom 
         {rooms.map(room => {
           const roomId = getRoomId(room);
           const roomName = getRoomName(room);
+          
+          // For DM rooms, get the other user's presence
+          const isDM = room.type === 'd';
+          const otherUsername = isDM && room.usernames 
+            ? room.usernames.find((u) => u !== username) 
+            : null;
+          const userPresence = otherUsername ? getUserPresence(otherUsername) : null;
 
           return (
             <div
@@ -213,6 +272,14 @@ export default function RoomList({ userId, username, selectedRoom, onSelectRoom 
               </div>
               <div className="room-info">
                 <div className="room-name">{roomName}</div>
+                {isDM && userPresence && (
+                  <div className="room-presence">
+                    <PresenceIndicator status={userPresence.status} size="small" />
+                    <span className="presence-text">
+                      {userPresence.status}
+                    </span>
+                  </div>
+                )}
                 {(room?.unread ?? 0) > 0 && (
                   <div className="unread-badge">{room.unread}</div>
                 )}

@@ -37,6 +37,7 @@ export const authAPI = {
 export const userAPI = {
   getMe: () => api.get('/users/me'),
   search: (q: string) => api.get('/users/search', { params: { q } }),
+  getPresence: () => api.get('/users/presence'),
 };
 
 export const roomAPI = {

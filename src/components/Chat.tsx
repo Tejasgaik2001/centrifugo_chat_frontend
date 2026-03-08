@@ -88,7 +88,6 @@ export default function Chat({ user, onLogout }: ChatProps) {
         </div>
         
         <RoomList
-          userId={user._id}
           username={user.username}
           selectedRoom={selectedRoom}
           onSelectRoom={handleSelectRoom}

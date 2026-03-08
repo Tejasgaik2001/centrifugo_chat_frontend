@@ -44,8 +44,39 @@ class WebSocketClient {
       });
 
       this.client.connect();
+      
+      // Subscribe to presence channel for real-time status updates
+      this.subscribeToPresence();
     } catch (error) {
       console.error('[Centrifugo] Failed to get token', error);
+    }
+  }
+
+  private async subscribeToPresence() {
+    if (!this.client) return;
+    
+    try {
+      const response = await centrifugoAPI.getSubscriptionToken('presence');
+      const token = response.data.token;
+      
+      const subscription = this.client.newSubscription('presence', { token });
+      
+      subscription.on('publication', (ctx: any) => {
+        console.log('[Centrifugo] Presence event received:', ctx.data);
+        this.emit(ctx.data.type, ctx.data);
+      });
+      
+      subscription.on('subscribed', () => {
+        console.log('[Centrifugo] Subscribed to presence channel');
+      });
+      
+      subscription.on('error', (ctx: any) => {
+        console.error('[Centrifugo] Presence subscription error:', ctx);
+      });
+      
+      subscription.subscribe();
+    } catch (error) {
+      console.error('[Centrifugo] Failed to subscribe to presence:', error);
     }
   }
 
@@ -90,6 +121,11 @@ class WebSocketClient {
         roomId: data.roomId,
         messageId: data.messageId,
       };
+    }
+
+    // Handle presence events
+    if (data.type === 'presence_change') {
+      return data;
     }
 
     return data;

@@ -231,7 +231,7 @@ export default function MessageList({ room, user }: MessageListProps) {
                         {message.readBy && message.readBy.length > 0 ? (
                           <span className="tick-read" title="Read">✓✓</span>
                         ) : (
-                          <span className="tick-sent" title="Sent">✓✓</span>
+                          <span className="tick-sent" title="Sent">✓</span>
                         )}
                       </span>
                     )}
