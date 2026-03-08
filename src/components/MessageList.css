@@ -109,6 +109,22 @@
   margin-top: 0.25rem;
 }
 
+.message-status {
+  margin-left: 0.5rem;
+  font-size: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+}
+
+.tick-sent {
+  color: #a0aec0;
+}
+
+.tick-read {
+  color: #4299e1;
+  font-weight: bold;
+}
+
 .message-input {
   display: flex;
   gap: 0.75rem;

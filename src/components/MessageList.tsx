@@ -25,6 +25,7 @@ interface Message {
   msg: string;
   ts: string;
   editedAt?: string;
+  readBy?: string[];
 }
 
 interface MessageListProps {
@@ -78,6 +79,19 @@ export default function MessageList({ room, user }: MessageListProps) {
       }
     };
 
+    const handleReadReceipt = (data: any) => {
+      console.log('[MessageList] Read receipt event received:', data);
+      if (data.roomId === roomId) {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg._id === data.lastReadMessageId
+              ? { ...msg, readBy: [...(msg.readBy || []), data.userId] }
+              : msg
+          )
+        );
+      }
+    };
+
     const handleDeletedMessage = (data: any) => {
       console.log('[MessageList] Message delete event received:', data, 'for room:', roomId);
       if (data.roomId === roomId) {
@@ -90,11 +104,13 @@ export default function MessageList({ room, user }: MessageListProps) {
     ws.on('message_new', handleNewMessage);
     ws.on('message_updated', handleUpdatedMessage);
     ws.on('message_deleted', handleDeletedMessage);
+    ws.on('read_receipt', handleReadReceipt);
 
     return () => {
       ws.off('message_new', handleNewMessage);
       ws.off('message_updated', handleUpdatedMessage);
       ws.off('message_deleted', handleDeletedMessage);
+      ws.off('read_receipt', handleReadReceipt);
       // Don't unsubscribe here - we want to keep receiving messages for all rooms
     };
   }, [room, roomId]);
@@ -208,7 +224,18 @@ export default function MessageList({ room, user }: MessageListProps) {
                       {formatDistanceToNow(messageDate, { addSuffix: true })}
                     </span>
                   </div>
-                  <div className="message-text">{messageText}</div>
+                  <div className="message-text">
+                    {messageText}
+                    {senderId === user._id && (
+                      <span className="message-status">
+                        {message.readBy && message.readBy.length > 0 ? (
+                          <span className="tick-read" title="Read">✓✓</span>
+                        ) : (
+                          <span className="tick-sent" title="Sent">✓✓</span>
+                        )}
+                      </span>
+                    )}
+                  </div>
                   {message.editedAt && (
                     <div className="message-edited">(edited)</div>
                   )}
