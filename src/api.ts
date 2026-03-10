@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: '/api/v1',
+  baseURL: 'http://localhost:3000/api/v1',
 });
 
 let accessToken: string | null = localStorage.getItem('accessToken');
@@ -60,6 +60,8 @@ export const messageAPI = {
     }),
   edit: (id: string, msg: string) => api.patch(`/messages/${id}`, { msg }),
   delete: (id: string) => api.delete(`/messages/${id}`),
+  addReaction: (id: string, emoji: string) => api.post(`/messages/${id}/reactions`, { emoji }),
+  removeReaction: (id: string, emoji: string) => api.delete(`/messages/${id}/reactions/${emoji}`),
 };
 
 export const centrifugoAPI = {

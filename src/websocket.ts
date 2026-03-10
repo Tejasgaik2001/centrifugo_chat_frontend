@@ -33,14 +33,17 @@ class WebSocketClient {
 
       this.client.on('connected', (ctx: any) => {
         console.log('[Centrifugo] Connected', ctx);
+        this.emit('connected', ctx);
       });
 
       this.client.on('disconnected', (ctx: any) => {
         console.log('[Centrifugo] Disconnected', ctx);
+        this.emit('disconnected', ctx);
       });
 
       this.client.on('error', (ctx: any) => {
         console.error('[Centrifugo] Error', ctx);
+        this.emit('error', ctx);
       });
 
       this.client.connect();

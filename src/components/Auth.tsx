@@ -24,10 +24,13 @@ export default function Auth({ onLogin }: AuthProps) {
 
     try {
       if (isLogin) {
-        const res = await authAPI.login({
+        const loginData = {
           email: formData.email,
           password: formData.password,
-        });
+        };
+        console.log('Sending login request:', loginData);
+        const res = await authAPI.login(loginData);
+        console.log('Login response:', res.data);
         onLogin(res.data.user, res.data.accessToken);
         localStorage.setItem('refreshToken', res.data.refreshToken);
       } else {
@@ -41,6 +44,8 @@ export default function Auth({ onLogin }: AuthProps) {
         localStorage.setItem('refreshToken', res.data.refreshToken);
       }
     } catch (err: any) {
+      console.error('Login error:', err);
+      console.error('Error response:', err.response?.data);
       setError(err.response?.data?.error?.message || 'An error occurred');
     } finally {
       setLoading(false);

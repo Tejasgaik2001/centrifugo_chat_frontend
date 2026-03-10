@@ -1,0 +1,65 @@
+.connection-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 8px 16px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: white;
+  animation: slideDown 0.3s ease-out;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.connection-banner.offline {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+}
+
+.connection-banner.online {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+}
+
+.banner-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: white;
+}
+
+.status-dot.offline {
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes slideDown {
+  from {
+    transform: translateY(-100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(0.8);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}

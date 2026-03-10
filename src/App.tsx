@@ -3,6 +3,7 @@ import Auth from './components/Auth';
 import Chat from './components/Chat';
 import { setToken, clearToken, userAPI } from './api';
 import { ws } from './websocket';
+import ConnectionBanner from './components/ConnectionBanner';
 
 interface User {
   _id: string;
@@ -58,10 +59,15 @@ function App() {
     );
   }
 
-  return user ? (
-    <Chat user={user} onLogout={handleLogout} />
-  ) : (
-    <Auth onLogin={handleLogin} />
+  return (
+    <>
+      <ConnectionBanner />
+      {user ? (
+        <Chat user={user} onLogout={handleLogout} />
+      ) : (
+        <Auth onLogin={handleLogin} />
+      )}
+    </>
   );
 }
 

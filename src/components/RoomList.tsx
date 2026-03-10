@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { roomAPI, userAPI } from '../api';
 import { ws } from '../websocket';
 import PresenceIndicator from './PresenceIndicator';
+import GroupCreation from './GroupCreation';
+import { presenceCache } from '../services/presenceCache';
 import './RoomList.css';
 
 interface Room {
@@ -12,27 +14,32 @@ interface Room {
   type: string;
   unread?: number;
   usernames?: string[];
+  memberIds?: string[];
+  lastMessage?: {
+    text: string;
+    timestamp: string;
+    sender: string;
+  };
 }
 
-interface UserPresence {
-  userId: string;
-  username: string;
-  status: 'online' | 'offline' | 'away' | 'dnd';
-  lastSeen: string;
-}
 
 interface RoomListProps {
-  username: string;
+  user: {
+    _id: string;
+    username: string;
+  };
   selectedRoom: Room | null;
   onSelectRoom: (room: Room) => void;
 }
 
-export default function RoomList({ username, selectedRoom, onSelectRoom }: RoomListProps) {
+export default function RoomList({ user, selectedRoom, onSelectRoom }: RoomListProps) {
+  const username = user.username;
   const [rooms, setRooms] = useState<Room[]>([]);
   const [showNewChat, setShowNewChat] = useState(false);
+  const [showGroupCreation, setShowGroupCreation] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [userPresence, setUserPresence] = useState<Record<string, UserPresence>>({});
+  const [, forceUpdate] = useState(0);
 
   const getRoomId = (room: Room | null | undefined) => room?._id ?? room?.id ?? room?.rid ?? '';
 
@@ -40,7 +47,7 @@ export default function RoomList({ username, selectedRoom, onSelectRoom }: RoomL
     loadRooms();
     loadUserPresence();
 
-    // Listen for new messages to update unread counters
+    // Listen for new messages to update unread counters and refresh room list
     const handleNewMessage = (data: any) => {
       console.log('[RoomList] New message event received:', data);
       const roomId = data?.roomId;
@@ -55,48 +62,71 @@ export default function RoomList({ username, selectedRoom, onSelectRoom }: RoomL
       console.log('[RoomList] Comparing roomId:', roomId, 'with selectedRoomId:', selectedRoomId);
       console.log('[RoomList] selectedRoom:', selectedRoom);
       
-      // Only increment if the message is NOT for the currently selected room
-      // AND there is actually a room selected
-      if (!selectedRoom || roomId !== selectedRoomId) {
-        console.log('[RoomList] Incrementing unread for room:', roomId, 'selectedRoom:', selectedRoom);
-        setRooms((prevRooms) =>
-          prevRooms.map((room) => {
-            const currentRoomId = getRoomId(room);
-            if (currentRoomId === roomId) {
-              const currentUnread = room.unread ?? 0;
-              console.log('[RoomList] Current unread:', currentUnread, 'New unread:', currentUnread + 1);
-              return { ...room, unread: currentUnread + 1 };
-            }
-            return room;
-          })
-        );
-      } else {
-        console.log('[RoomList] Message is for selected room, not incrementing unread');
-      }
+      // Update room with latest message and reorder
+      setRooms((prevRooms) => {
+        const updatedRooms = prevRooms.map((room) => {
+          const currentRoomId = getRoomId(room);
+          if (currentRoomId === roomId) {
+            const currentUnread = room.unread ?? 0;
+            const newUnread = (!selectedRoom || roomId !== selectedRoomId) ? currentUnread + 1 : currentUnread;
+            
+            // Update with latest message info
+            return {
+              ...room,
+              unread: newUnread,
+              lastMessage: {
+                text: data.message?.msg || '',
+                timestamp: data.message?.ts || new Date().toISOString(),
+                sender: data.message?.u?.username || 'Unknown'
+              }
+            };
+          }
+          return room;
+        });
+        
+        // Reorder rooms: move the room with new message to the top
+        const roomIndex = updatedRooms.findIndex(r => getRoomId(r) === roomId);
+        if (roomIndex > 0) {
+          const [movedRoom] = updatedRooms.splice(roomIndex, 1);
+          return [movedRoom, ...updatedRooms];
+        }
+        
+        return updatedRooms;
+      });
     };
 
     // Listen for presence changes
     const handlePresenceChange = (data: any) => {
       console.log('[RoomList] Presence change event received:', data);
       if (data.type === 'presence_change') {
-        setUserPresence(prev => ({
-          ...prev,
-          [data.userId]: {
-            userId: data.userId,
-            username: data.username,
-            status: data.status,
-            lastSeen: data.timestamp
-          }
-        }));
+        presenceCache.set(data.userId, {
+          userId: data.userId,
+          username: data.username,
+          status: data.status,
+          lastSeen: data.timestamp
+        });
+        forceUpdate(prev => prev + 1); // Trigger re-render
+      }
+    };
+
+    const handleRoomCreated = (data: any) => {
+      console.log('[RoomList] Room created event received:', data);
+      
+      // If we are a member of this new room, reload
+      if (data.memberIds && data.memberIds.includes(user._id)) {
+          console.log('[RoomList] New room involves current user, reloading...');
+          loadRooms();
       }
     };
 
     ws.on('message_new', handleNewMessage);
     ws.on('presence_change', handlePresenceChange);
+    ws.on('room_created', handleRoomCreated);
 
     return () => {
       ws.off('message_new', handleNewMessage);
       ws.off('presence_change', handlePresenceChange);
+      ws.off('room_created', handleRoomCreated);
     };
   }, [selectedRoom]);
 
@@ -113,19 +143,15 @@ export default function RoomList({ username, selectedRoom, onSelectRoom }: RoomL
   const loadUserPresence = async () => {
     try {
       const res = await userAPI.getPresence();
-      const presenceMap: Record<string, UserPresence> = {};
-      res.data.users.forEach((user: UserPresence) => {
-        presenceMap[user.userId] = user;
-      });
-      setUserPresence(presenceMap);
+      presenceCache.setMultiple(res.data.users);
+      forceUpdate(prev => prev + 1); // Trigger re-render
     } catch (err) {
       console.error('Failed to load user presence:', err);
     }
   };
 
-  const getUserPresence = (username: string): UserPresence | null => {
-    const user = Object.values(userPresence).find(p => p.username === username);
-    return user || null;
+  const getUserPresence = (username: string) => {
+    return presenceCache.getByUsername(username);
   };
 
   const handleSearch = async (query: string) => {
@@ -178,13 +204,31 @@ export default function RoomList({ username, selectedRoom, onSelectRoom }: RoomL
 
   const getAvatarInitial = (value: string) => value.trim().charAt(0).toUpperCase() || 'U';
 
+  const handleGroupCreated = (room: Room) => {
+    const roomId = getRoomId(room);
+    if (roomId) {
+      const normalizedRoom: Room = { ...room, _id: roomId };
+      setRooms([normalizedRoom, ...rooms]);
+      onSelectRoom(normalizedRoom);
+    }
+  };
+
   return (
     <div className="room-list">
       <div className="room-list-header">
         <h3>Conversations</h3>
-        <button onClick={() => setShowNewChat(!showNewChat)} className="new-chat-btn">
-          +
-        </button>
+        <div className="header-actions">
+          <button 
+            onClick={() => setShowGroupCreation(true)} 
+            className="create-group-btn"
+            title="Create Group"
+          >
+            👥
+          </button>
+          <button onClick={() => setShowNewChat(!showNewChat)} className="new-chat-btn">
+            +
+          </button>
+        </div>
       </div>
 
       {showNewChat && (
@@ -237,10 +281,16 @@ export default function RoomList({ username, selectedRoom, onSelectRoom }: RoomL
           
           // For DM rooms, get the other user's presence
           const isDM = room.type === 'd';
-          const otherUsername = isDM && room.usernames 
-            ? room.usernames.find((u) => u !== username) 
+          const otherUsername = isDM && room.usernames && Array.isArray(room.usernames)
+            ? room.usernames.find((u) => u.toLowerCase().trim() !== username.toLowerCase().trim()) 
             : null;
-          const userPresence = otherUsername ? getUserPresence(otherUsername) : null;
+          const otherUserId = isDM && room.memberIds && Array.isArray(room.memberIds)
+            ? room.memberIds.find((id) => id !== user._id)
+            : null;
+            
+          const userPresence = otherUserId 
+            ? presenceCache.get(otherUserId) 
+            : (otherUsername ? getUserPresence(otherUsername) : null);
 
           return (
             <div
@@ -271,7 +321,20 @@ export default function RoomList({ username, selectedRoom, onSelectRoom }: RoomL
                 {getAvatarInitial(roomName)}
               </div>
               <div className="room-info">
-                <div className="room-name">{roomName}</div>
+                <div className="room-header-row">
+                  <div className="room-name">{roomName}</div>
+                  {room.lastMessage && (
+                    <div className="last-message-time">
+                      {new Date(room.lastMessage.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  )}
+                </div>
+                {room.lastMessage && (
+                  <div className="last-message">
+                    <span className="last-message-sender">{room.lastMessage.sender}: </span>
+                    <span className="last-message-text">{room.lastMessage.text}</span>
+                  </div>
+                )}
                 {isDM && userPresence && (
                   <div className="room-presence">
                     <PresenceIndicator status={userPresence.status} size="small" />
@@ -288,6 +351,13 @@ export default function RoomList({ username, selectedRoom, onSelectRoom }: RoomL
           );
         })}
       </div>
+
+      {showGroupCreation && (
+        <GroupCreation
+          onClose={() => setShowGroupCreation(false)}
+          onGroupCreated={handleGroupCreated}
+        />
+      )}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import RoomList from './RoomList';
 import MessageList from './MessageList';
+import WebSocketDebugPanel from './WebSocketDebugPanel';
 import { authAPI } from '../api';
 import './Chat.css';
 
@@ -19,6 +20,7 @@ interface Room {
   type: string;
   unread?: number;
   usernames?: string[];
+  memberIds?: string[];
 }
 
 interface ChatProps {
@@ -78,7 +80,7 @@ export default function Chat({ user, onLogout }: ChatProps) {
           <div className="user-info">
             <div className="user-avatar">{avatarInitial}</div>
             <div>
-              <div className="user-name">{displayName}</div>
+              <div className="user-name text-white">{displayName}</div>
               <div className="user-username">@{displayUsername}</div>
             </div>
           </div>
@@ -88,7 +90,7 @@ export default function Chat({ user, onLogout }: ChatProps) {
         </div>
         
         <RoomList
-          username={user.username}
+          user={user}
           selectedRoom={selectedRoom}
           onSelectRoom={handleSelectRoom}
         />
@@ -107,6 +109,9 @@ export default function Chat({ user, onLogout }: ChatProps) {
           </div>
         )}
       </div>
+      
+      {/* WebSocket Debug Panel */}
+      <WebSocketDebugPanel />
     </div>
   );
 }

@@ -10,10 +10,59 @@
   background: white;
 }
 
+.message-header-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
 .message-header h2 {
   font-size: 1.25rem;
   font-weight: 600;
   color: #2d3748;
+  margin: 0;
+}
+
+.header-user-info {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.header-presence {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.header-presence-text {
+  font-size: 0.875rem;
+  color: #718096;
+  text-transform: capitalize;
+}
+
+.header-user-ids {
+  font-size: 0.75rem;
+  color: #718096;
+  font-family: monospace;
+  background: #f7fafc;
+  padding: 0.125rem 0.6rem;
+  border-radius: 4px;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: 0.5rem;
+}
+
+.id-label {
+  font-weight: 600;
+  color: #4a5568;
+}
+
+.id-separator {
+  color: #cbd5e0;
+  margin: 0 0.25rem;
 }
 
 .messages {
@@ -131,6 +180,31 @@
   padding: 1rem 1.5rem;
   border-top: 1px solid #e2e8f0;
   background: white;
+  align-items: center;
+}
+
+.emoji-button {
+  width: 40px;
+  height: 40px;
+  border: none;
+  background: #f7fafc;
+  border-radius: 50%;
+  font-size: 1.25rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.emoji-button:hover {
+  background: #edf2f7;
+  transform: scale(1.1);
+}
+
+.emoji-button:active {
+  transform: scale(0.95);
 }
 
 .message-input input {

@@ -1,7 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { messageAPI, roomAPI } from '../api';
+import { messageAPI, roomAPI, userAPI } from '../api';
 import { ws } from '../websocket';
 import { formatDistanceToNow } from 'date-fns';
+import PresenceIndicator from './PresenceIndicator';
+import EmojiPicker from './EmojiPicker';
+import { presenceCache, type UserPresence } from '../services/presenceCache';
 import './MessageList.css';
 
 interface User {
@@ -17,6 +20,7 @@ interface Room {
   name?: string;
   type: string;
   usernames?: string[];
+  memberIds?: string[];
 }
 
 interface Message {
@@ -37,6 +41,8 @@ export default function MessageList({ room, user }: MessageListProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [, forceUpdate] = useState(0); // For triggering re-renders when cache updates
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
   const roomId = room._id ?? room.id ?? room.rid ?? '';
@@ -49,6 +55,7 @@ export default function MessageList({ room, user }: MessageListProps) {
     }
 
     loadMessages();
+    loadUserPresence();
     ws.subscribe(roomId);
     
     const handleNewMessage = (data: any) => {
@@ -64,7 +71,9 @@ export default function MessageList({ room, user }: MessageListProps) {
           }
           return prev;
         });
-        // Don't mark as read here - RoomList handles it when room is selected
+        if (data.message.u._id !== user._id) {
+          roomAPI.markRead(roomId).catch(err => console.error('Failed to auto-mark as read:', err));
+        }
       }
     };
 
@@ -82,13 +91,21 @@ export default function MessageList({ room, user }: MessageListProps) {
     const handleReadReceipt = (data: any) => {
       console.log('[MessageList] Read receipt event received:', data);
       if (data.roomId === roomId) {
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg._id === data.lastReadMessageId
-              ? { ...msg, readBy: [...(msg.readBy || []), data.userId] }
-              : msg
-          )
-        );
+        setMessages((prev) => {
+          const lastReadIndex = prev.findIndex(msg => msg._id === data.lastReadMessageId);
+          if (lastReadIndex === -1) return prev;
+          
+          // Mark all messages up to and including the last read message as read
+          return prev.map((msg, index) => {
+            if (index <= lastReadIndex) {
+              const readBy = msg.readBy || [];
+              if (!readBy.includes(data.userId)) {
+                return { ...msg, readBy: [...readBy, data.userId] };
+              }
+            }
+            return msg;
+          });
+        });
       }
     };
 
@@ -101,19 +118,59 @@ export default function MessageList({ room, user }: MessageListProps) {
       }
     };
 
+    const handlePresenceChange = (data: any) => {
+      console.log('[MessageList] Presence change event received:', data);
+      if (data.type === 'presence_change') {
+        presenceCache.set(data.userId, {
+          userId: data.userId,
+          username: data.username,
+          status: data.status,
+          lastSeen: data.timestamp
+        });
+        forceUpdate(prev => prev + 1); // Trigger re-render
+      }
+    };
+
     ws.on('message_new', handleNewMessage);
     ws.on('message_updated', handleUpdatedMessage);
     ws.on('message_deleted', handleDeletedMessage);
     ws.on('read_receipt', handleReadReceipt);
+    ws.on('presence_change', handlePresenceChange);
 
     return () => {
       ws.off('message_new', handleNewMessage);
       ws.off('message_updated', handleUpdatedMessage);
       ws.off('message_deleted', handleDeletedMessage);
       ws.off('read_receipt', handleReadReceipt);
+      ws.off('presence_change', handlePresenceChange);
       // Don't unsubscribe here - we want to keep receiving messages for all rooms
     };
   }, [room, roomId]);
+
+  const loadUserPresence = async () => {
+    try {
+      const res = await userAPI.getPresence();
+      console.log('[MessageList] Loaded user presence:', res.data);
+      presenceCache.setMultiple(res.data.users);
+      console.log('[MessageList] Presence cache updated:', presenceCache.getAll());
+      forceUpdate(prev => prev + 1); // Trigger re-render
+    } catch (err) {
+      console.error('Failed to load user presence:', err);
+    }
+  };
+
+  const getUserPresence = (username: string): UserPresence | null => {
+    const presence = presenceCache.getByUsername(username);
+    console.log('[MessageList] Getting presence for username:', username, 'found:', presence?.status);
+    return presence;
+  };
+
+  const getUserPresenceByUserId = (userId: string | null): UserPresence | null => {
+    if (!userId) return null;
+    const presence = presenceCache.get(userId);
+    console.log('[MessageList] Getting presence for userId:', userId, 'found:', presence?.status);
+    return presence;
+  };
 
   useEffect(() => {
     scrollToBottom();
@@ -129,6 +186,7 @@ export default function MessageList({ room, user }: MessageListProps) {
       const res = await messageAPI.list(roomId);
       setMessages(res.data.messages);
       await roomAPI.markRead(roomId);
+      await loadUserPresence();
     } catch (err) {
       console.error('Failed to load messages:', err);
     } finally {
@@ -189,12 +247,65 @@ export default function MessageList({ room, user }: MessageListProps) {
     return 'Unnamed Room';
   };
 
+  const getOtherUsername = () => {
+    if (room.type === 'd' && room.usernames) {
+      const myUsername = user.username.toLowerCase().trim();
+      return room.usernames.find(u => u.toLowerCase().trim() !== myUsername) || null;
+    }
+    return null;
+  };
+
+  const getOtherUserId = () => {
+    // 0. Try from room.memberIds first - most reliable
+    if (room.memberIds && Array.isArray(room.memberIds)) {
+      const otherId = room.memberIds.find(id => id !== user._id);
+      if (otherId) return otherId;
+    }
+
+    const otherUsername = getOtherUsername();
+    if (!otherUsername) return null;
+    
+    // 1. Try from presence cache
+    const presence = getUserPresence(otherUsername);
+    if (presence?.userId) return presence.userId;
+    
+    // 2. Try to find in messages if presence cache is incomplete
+    const otherMessage = messages.find(m => m.u.username === otherUsername);
+    if (otherMessage?.u._id) return otherMessage.u._id;
+    
+    return null;
+  };
+
   const getAvatarInitial = (value: string) => value.trim().charAt(0).toUpperCase() || 'U';
 
   return (
     <div className="message-list">
       <div className="message-header">
-        <h2>{getRoomName()}</h2>
+        <div className="message-header-content">
+          <h2>{getRoomName()}</h2>
+          {room.type === 'd' && getOtherUsername() && (
+            <div className="header-user-info">
+              <div className="header-presence">
+                <PresenceIndicator 
+                  status={getUserPresenceByUserId(getOtherUserId())?.status || getUserPresence(getOtherUsername()!)?.status || 'offline'} 
+                  size="small" 
+                />
+                <span className="header-presence-text">
+                  {getUserPresenceByUserId(getOtherUserId())?.status || getUserPresence(getOtherUsername()!)?.status || 'offline'}
+                </span>
+                <span className="header-user-ids">
+                  <span className="id-label">You:</span> {user._id}
+                  {getOtherUserId() && (
+                    <>
+                      <span className="id-separator">|</span>
+                      <span className="id-label">Other:</span> {getOtherUserId()}
+                    </>
+                  )}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="messages">
@@ -248,6 +359,14 @@ export default function MessageList({ room, user }: MessageListProps) {
       </div>
 
       <form className="message-input" onSubmit={handleSend}>
+        <button
+          type="button"
+          className="emoji-button"
+          onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+          title="Add emoji"
+        >
+          😊
+        </button>
         <input
           type="text"
           placeholder="Type a message..."
@@ -262,6 +381,16 @@ export default function MessageList({ room, user }: MessageListProps) {
           Send
         </button>
       </form>
+
+      {showEmojiPicker && (
+        <EmojiPicker
+          onEmojiSelect={(emoji) => {
+            setNewMessage(prev => prev + emoji);
+            setShowEmojiPicker(false);
+          }}
+          onClose={() => setShowEmojiPicker(false)}
+        />
+      )}
     </div>
   );
 }
