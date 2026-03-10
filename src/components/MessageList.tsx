@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { messageAPI, roomAPI, userAPI } from '../api';
+import { messageAPI, roomAPI, userAPI, fileAPI } from '../api';
 import { ws } from '../websocket';
 import { formatDistanceToNow } from 'date-fns';
 import PresenceIndicator from './PresenceIndicator';
@@ -23,6 +23,26 @@ interface Room {
   memberIds?: string[];
 }
 
+interface Attachment {
+  type: 'image' | 'video' | 'audio' | 'file';
+  url: string;
+  name: string;
+  size: number;
+  mimeType: string;
+}
+
+interface PendingAttachment {
+  file: File;
+  previewUrl: string;
+  type: 'image' | 'video' | 'audio' | 'file';
+}
+
+interface Mention {
+  _id: string;
+  username: string;
+  type: 'user' | 'here' | 'all';
+}
+
 interface Message {
   _id: string;
   u: { _id: string; username: string };
@@ -30,6 +50,13 @@ interface Message {
   ts: string;
   editedAt?: string;
   readBy?: string[];
+  attachments?: Attachment[];
+  mentions?: Mention[];
+  replyTo?: {
+    _id: string;
+    msg: string;
+    u: { _id: string; username: string };
+  };
 }
 
 interface MessageListProps {
@@ -42,8 +69,16 @@ export default function MessageList({ room, user }: MessageListProps) {
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showMentionAutocomplete, setShowMentionAutocomplete] = useState(false);
+  const [mentionResults, setMentionResults] = useState<any[]>([]);
+  const [replyTo, setReplyTo] = useState<Message | null>(null);
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [typingUsersInRoom, setTypingUsersInRoom] = useState<Set<string>>(new Set());
+  
   const [, forceUpdate] = useState(0); // For triggering re-renders when cache updates
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
   const roomId = room._id ?? room.id ?? room.rid ?? '';
 
@@ -131,11 +166,33 @@ export default function MessageList({ room, user }: MessageListProps) {
       }
     };
 
+    const handleTypingStart = (data: any) => {
+      if (data.roomId === roomId && data.username !== user.username) {
+        setTypingUsersInRoom(prev => {
+          const next = new Set(prev);
+          next.add(data.username);
+          return next;
+        });
+      }
+    };
+
+    const handleTypingStop = (data: any) => {
+      if (data.roomId === roomId) {
+        setTypingUsersInRoom(prev => {
+          const next = new Set(prev);
+          next.delete(data.username);
+          return next;
+        });
+      }
+    };
+
     ws.on('message_new', handleNewMessage);
     ws.on('message_updated', handleUpdatedMessage);
     ws.on('message_deleted', handleDeletedMessage);
     ws.on('read_receipt', handleReadReceipt);
     ws.on('presence_change', handlePresenceChange);
+    ws.on('typing_start', handleTypingStart);
+    ws.on('typing_stop', handleTypingStop);
 
     return () => {
       ws.off('message_new', handleNewMessage);
@@ -143,6 +200,8 @@ export default function MessageList({ room, user }: MessageListProps) {
       ws.off('message_deleted', handleDeletedMessage);
       ws.off('read_receipt', handleReadReceipt);
       ws.off('presence_change', handlePresenceChange);
+      ws.off('typing_start', handleTypingStart);
+      ws.off('typing_stop', handleTypingStop);
       // Don't unsubscribe here - we want to keep receiving messages for all rooms
     };
   }, [room, roomId]);
@@ -224,19 +283,98 @@ export default function MessageList({ room, user }: MessageListProps) {
       return;
     }
 
-    const msg = newMessage;
-    setNewMessage('');
-    ws.stopTyping(trimmedRoomId);
-
+    setUploading(true);
     try {
+      // 1. Upload all pending attachments
+      const uploadedAttachments: Attachment[] = [];
+      for (const pending of attachments) {
+        const res = await fileAPI.upload(pending.file);
+        uploadedAttachments.push(res.data);
+      }
+
+      // 2. Send the message
+      const msg = newMessage;
+      setNewMessage('');
+      ws.stopTyping(trimmedRoomId);
+
       await messageAPI.send({
         rid: trimmedRoomId,
         msg,
+        replyTo: replyTo ? { _id: replyTo._id, msg: replyTo.msg, u: replyTo.u } : undefined,
+        attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined,
       });
+
+      // 3. Clear state
+      setReplyTo(null);
+      // Revoke blob URLs
+      attachments.forEach(a => URL.revokeObjectURL(a.previewUrl));
+      setAttachments([]);
     } catch (err) {
       console.error('Failed to send message:', err);
-      setNewMessage(msg);
+      alert('Failed to send message. Please try again.');
+    } finally {
+      setUploading(false);
     }
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 50 * 1024 * 1024) {
+      alert('File too large (max 50MB)');
+      return;
+    }
+
+    const type = file.type.startsWith('image/') ? 'image' : 
+                 file.type.startsWith('video/') ? 'video' : 'file';
+    
+    const previewUrl = URL.createObjectURL(file);
+    
+    setAttachments(prev => [...prev, {
+      file,
+      previewUrl,
+      type: type as any
+    }]);
+
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const removeAttachment = (index: number) => {
+    setAttachments(prev => {
+      const item = prev[index];
+      if (item) URL.revokeObjectURL(item.previewUrl);
+      return prev.filter((_, i) => i !== index);
+    });
+  };
+
+  const handleInputChange = (val: string) => {
+    setNewMessage(val);
+    handleTyping();
+
+    // Mention detection
+    const lastAtPos = val.lastIndexOf('@');
+    if (lastAtPos !== -1 && (lastAtPos === 0 || val[lastAtPos - 1] === ' ')) {
+      const query = val.substring(lastAtPos + 1).split(' ')[0];
+      setShowMentionAutocomplete(true);
+      
+      // Filter room members or global search
+      if (query.length >= 1) {
+        userAPI.search(query).then(res => setMentionResults(res.data.users));
+      } else {
+        setMentionResults([]);
+      }
+    } else {
+      setShowMentionAutocomplete(false);
+    }
+  };
+
+  const insertMention = (username: string) => {
+    const lastAtPos = newMessage.lastIndexOf('@');
+    const before = newMessage.substring(0, lastAtPos);
+    const after = newMessage.substring(newMessage.indexOf(' ', lastAtPos) === -1 ? newMessage.length : newMessage.indexOf(' ', lastAtPos));
+    setNewMessage(`${before}@${username} ${after}`);
+    setShowMentionAutocomplete(false);
   };
 
   const getRoomName = () => {
@@ -324,6 +462,7 @@ export default function MessageList({ room, user }: MessageListProps) {
               <div
                 key={message._id}
                 className={`message ${senderId === user._id ? 'own-message' : ''}`}
+                onMouseEnter={() => {}} // Could show hover actions
               >
                 <div className="message-avatar">
                   {getAvatarInitial(senderUsername)}
@@ -334,8 +473,29 @@ export default function MessageList({ room, user }: MessageListProps) {
                     <span className="message-time">
                       {formatDistanceToNow(messageDate, { addSuffix: true })}
                     </span>
+                    <button 
+                      className="reply-btn-inline"
+                      onClick={() => setReplyTo(message)}
+                      title="Reply"
+                    >
+                      ↩
+                    </button>
                   </div>
-                  <div className="message-text">
+                  
+                  {message.replyTo && (
+                    <div className="reply-preview-bubble" onClick={(e) => {
+                      e.stopPropagation();
+                      const element = document.getElementById(message.replyTo!._id);
+                      element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      element?.classList.add('highlight-message');
+                      setTimeout(() => element?.classList.remove('highlight-message'), 2000);
+                    }}>
+                      <div className="reply-user">{message.replyTo.u.username}</div>
+                      <div className="reply-msg">{message.replyTo.msg}</div>
+                    </div>
+                  )}
+
+                  <div className="message-text" id={message._id}>
                     {messageText}
                     {senderId === user._id && (
                       <span className="message-status">
@@ -347,6 +507,25 @@ export default function MessageList({ room, user }: MessageListProps) {
                       </span>
                     )}
                   </div>
+
+                  {message.attachments && message.attachments.length > 0 && (
+                    <div className="message-attachments">
+                      {message.attachments.map((att, idx) => (
+                        <div key={idx} className="attachment-item">
+                          {att.type === 'image' ? (
+                            <img src={`http://localhost:3000${att.url}`} alt={att.name} loading="lazy" />
+                          ) : att.type === 'video' ? (
+                            <video src={`http://localhost:3000${att.url}`} controls />
+                          ) : (
+                            <a href={`http://localhost:3000${att.url}`} target="_blank" rel="noreferrer">
+                              📄 {att.name}
+                            </a>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {message.editedAt && (
                     <div className="message-edited">(edited)</div>
                   )}
@@ -358,29 +537,90 @@ export default function MessageList({ room, user }: MessageListProps) {
         <div ref={messagesEndRef} />
       </div>
 
-      <form className="message-input" onSubmit={handleSend}>
-        <button
-          type="button"
-          className="emoji-button"
-          onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-          title="Add emoji"
-        >
-          😊
-        </button>
-        <input
-          type="text"
-          placeholder="Type a message..."
-          value={newMessage}
-          onChange={(e) => {
-            setNewMessage(e.target.value);
-            handleTyping();
-          }}
-          maxLength={10000}
-        />
-        <button type="submit" disabled={!newMessage.trim() || !roomId}>
-          Send
-        </button>
-      </form>
+      <div className="composer-area">
+        {typingUsersInRoom.size > 0 && (
+          <div className="typing-indicator-bar">
+            {Array.from(typingUsersInRoom).join(', ')} {typingUsersInRoom.size > 1 ? 'are' : 'is'} typing...
+          </div>
+        )}
+        {replyTo && (
+          <div className="reply-bar">
+            <div className="reply-bar-content">
+              <span className="reply-label">Replying to @{replyTo.u.username}</span>
+              <span className="reply-text">{replyTo.msg}</span>
+            </div>
+            <button className="close-reply" onClick={() => setReplyTo(null)}>×</button>
+          </div>
+        )}
+
+        {attachments.length > 0 && (
+          <div className="attachment-previews">
+            {attachments.map((att, idx) => (
+              <div key={idx} className="preview-item">
+                {att.type === 'image' ? (
+                  <img src={att.previewUrl} alt="preview" className="composer-preview-img" />
+                ) : (
+                  <span className="preview-name">{att.file.name}</span>
+                )}
+                <button 
+                  type="button"
+                  className="remove-preview" 
+                  onClick={() => removeAttachment(idx)}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {showMentionAutocomplete && mentionResults.length > 0 && (
+          <div className="mention-autocomplete">
+            {mentionResults.map(m => (
+              <div key={m._id} className="mention-item" onClick={() => insertMention(m.username)}>
+                @{m.username} ({m.name})
+              </div>
+            ))}
+          </div>
+        )}
+
+        <form className="message-input" onSubmit={handleSend}>
+          <button
+            type="button"
+            className="attachment-button"
+            onClick={() => fileInputRef.current?.click()}
+            title="Attach file"
+            disabled={uploading}
+          >
+            {uploading ? '⌛' : '📎'}
+          </button>
+          <input
+            type="file"
+            ref={fileInputRef}
+            style={{ display: 'none' }}
+            onChange={handleFileChange}
+            accept="image/*,video/*"
+          />
+          <button
+            type="button"
+            className="emoji-button"
+            onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+            title="Add emoji"
+          >
+            😊
+          </button>
+          <input
+            type="text"
+            placeholder="Type a message..."
+            value={newMessage}
+            onChange={(e) => handleInputChange(e.target.value)}
+            maxLength={10000}
+          />
+          <button type="submit" disabled={(!newMessage.trim() && attachments.length === 0) || !roomId || uploading}>
+            Send
+          </button>
+        </form>
+      </div>
 
       {showEmojiPicker && (
         <EmojiPicker

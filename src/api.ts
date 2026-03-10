@@ -47,16 +47,37 @@ export const roomAPI = {
   get: (rid: string) => api.get(`/rooms/${rid}`),
   getDM: (username: string) => api.get(`/rooms/dm/${username}`),
   markRead: (rid: string) => api.post(`/rooms/${rid}/read`),
+  typing: (rid: string, isTyping: boolean) => api.post(`/rooms/${rid}/typing`, { isTyping }),
+};
+
+export const fileAPI = {
+  upload: (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post('/files/upload', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+  },
 };
 
 export const messageAPI = {
   list: (rid: string, params?: { limit?: number; before?: string }) =>
     api.get(`/rooms/${rid}/messages`, { params }),
-  send: (data: { rid: string; msg: string; tmid?: string }) =>
+  send: (data: { 
+    rid: string; 
+    msg: string; 
+    tmid?: string;
+    replyTo?: { _id: string; msg: string; u: { _id: string; username: string } };
+    attachments?: Array<{ type: string; url: string; name: string; size: number; mimeType: string }>;
+  }) =>
     api.post('/messages', {
       rid: data.rid,
       msg: data.msg,
       ...(data.tmid ? { tmid: data.tmid } : {}),
+      ...(data.replyTo ? { replyTo: data.replyTo } : {}),
+      ...(data.attachments ? { attachments: data.attachments } : {}),
     }),
   edit: (id: string, msg: string) => api.patch(`/messages/${id}`, { msg }),
   delete: (id: string) => api.delete(`/messages/${id}`),

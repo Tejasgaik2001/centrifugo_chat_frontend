@@ -16,9 +16,10 @@ interface Room {
   usernames?: string[];
   memberIds?: string[];
   lastMessage?: {
-    text: string;
-    timestamp: string;
-    sender: string;
+    id: string;
+    msg: string;
+    ts: string;
+    u: { _id: string; username: string };
   };
 }
 
@@ -39,6 +40,7 @@ export default function RoomList({ user, selectedRoom, onSelectRoom }: RoomListP
   const [showGroupCreation, setShowGroupCreation] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [typingUsers, setTypingUsers] = useState<Record<string, Set<string>>>({});
   const [, forceUpdate] = useState(0);
 
   const getRoomId = (room: Room | null | undefined) => room?._id ?? room?.id ?? room?.rid ?? '';
@@ -75,9 +77,10 @@ export default function RoomList({ user, selectedRoom, onSelectRoom }: RoomListP
               ...room,
               unread: newUnread,
               lastMessage: {
-                text: data.message?.msg || '',
-                timestamp: data.message?.ts || new Date().toISOString(),
-                sender: data.message?.u?.username || 'Unknown'
+                id: data.message._id,
+                msg: data.message.msg,
+                ts: data.message.ts,
+                u: data.message.u,
               }
             };
           }
@@ -119,14 +122,35 @@ export default function RoomList({ user, selectedRoom, onSelectRoom }: RoomListP
       }
     };
 
+    const handleTypingStart = (data: any) => {
+      if (data.username === user.username) return;
+      setTypingUsers(prev => {
+        const roomTyping = new Set(prev[data.roomId] || []);
+        roomTyping.add(data.username);
+        return { ...prev, [data.roomId]: roomTyping };
+      });
+    };
+
+    const handleTypingStop = (data: any) => {
+      setTypingUsers(prev => {
+        const roomTyping = new Set(prev[data.roomId] || []);
+        roomTyping.delete(data.username);
+        return { ...prev, [data.roomId]: roomTyping };
+      });
+    };
+
     ws.on('message_new', handleNewMessage);
     ws.on('presence_change', handlePresenceChange);
     ws.on('room_created', handleRoomCreated);
+    ws.on('typing_start', handleTypingStart);
+    ws.on('typing_stop', handleTypingStop);
 
     return () => {
       ws.off('message_new', handleNewMessage);
       ws.off('presence_change', handlePresenceChange);
       ws.off('room_created', handleRoomCreated);
+      ws.off('typing_start', handleTypingStart);
+      ws.off('typing_stop', handleTypingStop);
     };
   }, [selectedRoom]);
 
@@ -320,20 +344,26 @@ export default function RoomList({ user, selectedRoom, onSelectRoom }: RoomListP
               <div className="room-avatar">
                 {getAvatarInitial(roomName)}
               </div>
-              <div className="room-info">
+                <div className="room-info">
                 <div className="room-header-row">
                   <div className="room-name">{roomName}</div>
-                  {room.lastMessage && (
+                  {room.lastMessage && room.lastMessage.ts && (
                     <div className="last-message-time">
-                      {new Date(room.lastMessage.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      {new Date(room.lastMessage.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </div>
                   )}
                 </div>
-                {room.lastMessage && (
-                  <div className="last-message">
-                    <span className="last-message-sender">{room.lastMessage.sender}: </span>
-                    <span className="last-message-text">{room.lastMessage.text}</span>
+                {typingUsers[roomId] && typingUsers[roomId].size > 0 ? (
+                  <div className="last-message typing-indicator-text">
+                    {Array.from(typingUsers[roomId]).join(', ')} {typingUsers[roomId].size > 1 ? 'are' : 'is'} typing...
                   </div>
+                ) : room.lastMessage ? (
+                  <div className="last-message">
+                    <span className="last-message-sender">{room.lastMessage.u.username}: </span>
+                    <span className="last-message-text">{room.lastMessage.msg || 'Sent an attachment'}</span>
+                  </div>
+                ) : (
+                  <div className="last-message empty-room-msg">No messages yet</div>
                 )}
                 {isDM && userPresence && (
                   <div className="room-presence">

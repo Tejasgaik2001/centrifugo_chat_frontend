@@ -1,5 +1,5 @@
 import { Centrifuge, type Subscription } from 'centrifuge';
-import { centrifugoAPI } from './api';
+import { centrifugoAPI, roomAPI } from './api';
 
 type MessageHandler = (data: any) => void;
 
@@ -131,6 +131,24 @@ class WebSocketClient {
       return data;
     }
 
+    if (data.type === 'typing_start') {
+      return {
+        type: 'typing_start',
+        roomId: data.roomId,
+        userId: data.userId,
+        username: data.username,
+      };
+    }
+
+    if (data.type === 'typing_stop') {
+      return {
+        type: 'typing_stop',
+        roomId: data.roomId,
+        userId: data.userId,
+        username: data.username,
+      };
+    }
+
     return data;
   }
 
@@ -222,10 +240,20 @@ class WebSocketClient {
     // this.subscriptions.delete(roomId);
   }
 
-  startTyping(_roomId: string) {
+  async startTyping(roomId: string) {
+    try {
+      await roomAPI.typing(roomId, true);
+    } catch (err) {
+      console.error('[Centrifugo] Failed to send typing_start:', err);
+    }
   }
 
-  stopTyping(_roomId: string) {
+  async stopTyping(roomId: string) {
+    try {
+      await roomAPI.typing(roomId, false);
+    } catch (err) {
+      console.error('[Centrifugo] Failed to send typing_stop:', err);
+    }
   }
 
   on(type: string, handler: MessageHandler) {
