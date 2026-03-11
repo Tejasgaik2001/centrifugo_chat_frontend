@@ -102,6 +102,8 @@ class WebSocketClient {
           msg: data.text,
           ts: data.createdAt,
           editedAt: data.editedAt,
+          attachments: data.attachments,
+          replyTo: data.replyTo,
         },
       };
     }

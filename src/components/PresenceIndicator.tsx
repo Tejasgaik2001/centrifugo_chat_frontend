@@ -1,4 +1,3 @@
-import React from 'react';
 import './PresenceIndicator.css';
 
 interface PresenceIndicatorProps {

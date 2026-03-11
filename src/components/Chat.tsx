@@ -15,7 +15,7 @@ interface User {
 interface Room {
   _id?: string;
   id?: string;
-  rid?: string;
+  roomId?: string;
   name?: string;
   type: string;
   unread?: number;
@@ -43,7 +43,7 @@ export default function Chat({ user, onLogout }: ChatProps) {
 
     try {
       const parsedRoom = JSON.parse(savedRoom) as Room;
-      const roomId = parsedRoom._id ?? parsedRoom.id ?? parsedRoom.rid ?? '';
+      const roomId = parsedRoom._id ?? parsedRoom.id ?? parsedRoom.roomId ?? '';
       if (roomId) {
         setSelectedRoom({ ...parsedRoom, _id: roomId });
       }
@@ -53,7 +53,7 @@ export default function Chat({ user, onLogout }: ChatProps) {
   }, [storageKey]);
 
   const handleSelectRoom = (room: Room) => {
-    const roomId = room._id ?? room.id ?? room.rid ?? '';
+    const roomId = room._id ?? room.id ?? room.roomId ?? '';
     if (!roomId) {
       return;
     }

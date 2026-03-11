@@ -9,7 +9,7 @@ import './RoomList.css';
 interface Room {
   _id?: string;
   id?: string;
-  rid?: string;
+  roomId?: string;
   name?: string;
   type: string;
   unread?: number;
@@ -43,7 +43,7 @@ export default function RoomList({ user, selectedRoom, onSelectRoom }: RoomListP
   const [typingUsers, setTypingUsers] = useState<Record<string, Set<string>>>({});
   const [, forceUpdate] = useState(0);
 
-  const getRoomId = (room: Room | null | undefined) => room?._id ?? room?.id ?? room?.rid ?? '';
+  const getRoomId = (room: Room | null | undefined) => room?._id ?? room?.id ?? room?.roomId ?? '';
 
   useEffect(() => {
     loadRooms();

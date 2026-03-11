@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { messageAPI, roomAPI, userAPI, fileAPI } from '../api';
 import { ws } from '../websocket';
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNow, isSameDay, format, isToday, isYesterday } from 'date-fns';
 import PresenceIndicator from './PresenceIndicator';
 import EmojiPicker from './EmojiPicker';
 import { presenceCache, type UserPresence } from '../services/presenceCache';
@@ -16,7 +16,7 @@ interface User {
 interface Room {
   _id?: string;
   id?: string;
-  rid?: string;
+  roomId?: string;
   name?: string;
   type: string;
   usernames?: string[];
@@ -75,12 +75,13 @@ export default function MessageList({ room, user }: MessageListProps) {
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [uploading, setUploading] = useState(false);
   const [typingUsersInRoom, setTypingUsersInRoom] = useState<Set<string>>(new Set());
+  const [showScrollButton, setShowScrollButton] = useState(false);
   
   const [, forceUpdate] = useState(0); // For triggering re-renders when cache updates
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
-  const roomId = room._id ?? room.id ?? room.rid ?? '';
+  const roomId = room._id ?? room.id ?? room.roomId ?? '';
 
   useEffect(() => {
     if (!roomId) {
@@ -232,8 +233,18 @@ export default function MessageList({ room, user }: MessageListProps) {
   };
 
   useEffect(() => {
-    scrollToBottom();
+    // Only auto-scroll if we're already at the bottom or if it's the initial load
+    if (!showScrollButton) {
+      scrollToBottom();
+    }
   }, [messages]);
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+    // Show button if we are scrolled up more than 100px from the bottom
+    const isScrolledUp = scrollHeight - scrollTop - clientHeight > 100;
+    setShowScrollButton(isScrolledUp);
+  };
 
   const loadMessages = async () => {
     if (!roomId) {
@@ -244,6 +255,12 @@ export default function MessageList({ room, user }: MessageListProps) {
     try {
       const res = await messageAPI.list(roomId);
       setMessages(res.data.messages);
+      
+      // Force scroll to bottom on initial load
+      setTimeout(() => {
+        scrollToBottom();
+      }, 100);
+
       await roomAPI.markRead(roomId);
       await loadUserPresence();
     } catch (err) {
@@ -255,6 +272,7 @@ export default function MessageList({ room, user }: MessageListProps) {
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    setShowScrollButton(false);
   };
 
   const handleTyping = () => {
@@ -298,7 +316,7 @@ export default function MessageList({ room, user }: MessageListProps) {
       ws.stopTyping(trimmedRoomId);
 
       await messageAPI.send({
-        rid: trimmedRoomId,
+        roomId: trimmedRoomId,
         msg,
         replyTo: replyTo ? { _id: replyTo._id, msg: replyTo.msg, u: replyTo.u } : undefined,
         attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined,
@@ -446,24 +464,44 @@ export default function MessageList({ room, user }: MessageListProps) {
         </div>
       </div>
 
-      <div className="messages">
+      <div className="messages" onScroll={handleScroll}>
         {loading ? (
           <div className="loading">Loading messages...</div>
         ) : messages.length === 0 ? (
           <div className="no-messages">No messages yet. Start the conversation!</div>
         ) : (
-          messages.map(message => {
+          messages.map((message, index) => {
             const senderId = message.u?._id ?? '';
             const senderUsername = message.u?.username?.trim() || 'unknown';
             const messageText = message.msg ?? '';
             const messageDate = message.ts ? new Date(message.ts) : new Date();
 
+            let showDateDivider = false;
+            // First message gets a divider, or if the current message date is on a different day than the previous one
+            if (index === 0) {
+              showDateDivider = true;
+            } else {
+              const prevMessageDate = messages[index - 1].ts ? new Date(messages[index - 1].ts) : new Date();
+              showDateDivider = !isSameDay(messageDate, prevMessageDate);
+            }
+
             return (
-              <div
-                key={message._id}
-                className={`message ${senderId === user._id ? 'own-message' : ''}`}
-                onMouseEnter={() => {}} // Could show hover actions
-              >
+              <div key={message._id}>
+                {showDateDivider && (
+                  <div className="date-divider">
+                    <span className="date-divider-text">
+                      {isToday(messageDate)
+                        ? 'Today'
+                        : isYesterday(messageDate)
+                        ? 'Yesterday'
+                        : format(messageDate, 'MMM d, yyyy')}
+                    </span>
+                  </div>
+                )}
+                <div
+                  className={`message ${senderId === user._id ? 'own-message' : ''}`}
+                  onMouseEnter={() => {}} // Could show hover actions
+                >
                 <div className="message-avatar">
                   {getAvatarInitial(senderUsername)}
                 </div>
@@ -530,6 +568,7 @@ export default function MessageList({ room, user }: MessageListProps) {
                     <div className="message-edited">(edited)</div>
                   )}
                 </div>
+                </div>
               </div>
             );
           })
@@ -584,6 +623,15 @@ export default function MessageList({ room, user }: MessageListProps) {
           </div>
         )}
 
+        {showScrollButton && (
+          <button 
+            className="scroll-to-bottom-btn" 
+            onClick={scrollToBottom}
+            title="Scroll to latest messages"
+          >
+            ↓
+          </button>
+        )}
         <form className="message-input" onSubmit={handleSend}>
           <button
             type="button"

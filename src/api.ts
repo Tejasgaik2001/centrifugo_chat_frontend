@@ -44,10 +44,10 @@ export const roomAPI = {
   list: () => api.get('/rooms'),
   create: (data: { type: string; name: string; memberIds?: string[] }) =>
     api.post('/rooms', data),
-  get: (rid: string) => api.get(`/rooms/${rid}`),
+  get: (roomId: string) => api.get(`/rooms/${roomId}`),
   getDM: (username: string) => api.get(`/rooms/dm/${username}`),
-  markRead: (rid: string) => api.post(`/rooms/${rid}/read`),
-  typing: (rid: string, isTyping: boolean) => api.post(`/rooms/${rid}/typing`, { isTyping }),
+  markRead: (roomId: string) => api.post(`/rooms/${roomId}/read`),
+  typing: (roomId: string, isTyping: boolean) => api.post(`/rooms/${roomId}/typing`, { isTyping }),
 };
 
 export const fileAPI = {
@@ -63,19 +63,19 @@ export const fileAPI = {
 };
 
 export const messageAPI = {
-  list: (rid: string, params?: { limit?: number; before?: string }) =>
-    api.get(`/rooms/${rid}/messages`, { params }),
+  list: (roomId: string, params?: { limit?: number; before?: string }) =>
+    api.get(`/rooms/${roomId}/messages`, { params }),
   send: (data: { 
-    rid: string; 
+    roomId: string; 
     msg: string; 
-    tmid?: string;
+    threadId?: string;
     replyTo?: { _id: string; msg: string; u: { _id: string; username: string } };
     attachments?: Array<{ type: string; url: string; name: string; size: number; mimeType: string }>;
   }) =>
     api.post('/messages', {
-      rid: data.rid,
+      roomId: data.roomId,
       msg: data.msg,
-      ...(data.tmid ? { tmid: data.tmid } : {}),
+      ...(data.threadId ? { threadId: data.threadId } : {}),
       ...(data.replyTo ? { replyTo: data.replyTo } : {}),
       ...(data.attachments ? { attachments: data.attachments } : {}),
     }),
